@@ -1,0 +1,19 @@
+{
+  "name": "Luna Bot MINI",
+  "description": "WhatsApp XMD bot (Baileys)",
+  "repository": "",
+  "keywords": ["whatsapp", "baileys", "bot", "node"],
+  "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-nodejs.git"
+    }
+  ],
+  "env": {
+    "SESSION_ID": {
+      "description": "Luna Bot session string (e.g. LunaBot!<base64_compressed_data>)",
+      "required": false,
+      "value": ""
+    }
+  }
+}
+
