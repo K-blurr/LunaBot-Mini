@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@bochilteam/scraper": "^5.0.1",
+    "@bochilteam/scraper-facebook": "^5.0.0",
+    "gifted-btns": "^1.0.0",
+    "mumaker": "^2.0.0",
+    "ruhend-scraper": "^9.0.8"
+  }
+}
