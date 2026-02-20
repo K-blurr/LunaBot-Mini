@@ -1,6 +1,6 @@
 // pair.js - COMPLETELY FIXED VERSION
 const express = require('express');
-const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
@@ -149,12 +149,18 @@ app.get('/', (req, res) => {
                 background: #f8f9fa;
                 border: 2px dashed #667eea;
                 padding: 15px;
-                font-size: 24px;
+                font-size: 28px;
                 font-family: monospace;
                 text-align: center;
                 letter-spacing: 5px;
                 margin: 15px 0;
                 border-radius: 8px;
+                font-weight: bold;
+            }
+            .success-message {
+                color: #28a745;
+                font-weight: bold;
+                margin-top: 15px;
             }
         </style>
     </head>
@@ -175,8 +181,8 @@ app.get('/', (req, res) => {
             <form id="pairForm" onsubmit="event.preventDefault(); generatePair();">
                 <div class="form-group">
                     <label>Phone Number (with country code)</label>
-                    <input type="tel" id="phone" placeholder="2348012345678" required>
-                    <small style="color: #666; display: block; margin-top: 5px;">Example: 234 for Nigeria, 91 for India, 1 for USA</small>
+                    <input type="tel" id="phone" placeholder="233594025845" required>
+                    <small style="color: #666; display: block; margin-top: 5px;">Example: 233 for Ghana, 234 for Nigeria, 91 for India, 1 for USA</small>
                 </div>
                 
                 <button type="submit" id="submitBtn">🔑 Generate Pair Code</button>
@@ -196,6 +202,7 @@ app.get('/', (req, res) => {
                 const submitBtn = document.getElementById('submitBtn');
                 const loading = document.getElementById('loading');
                 const result = document.getElementById('result');
+                const pairForm = document.getElementById('pairForm');
                 
                 if (!phone) {
                     showResult('error', 'Please enter your phone number');
@@ -203,7 +210,12 @@ app.get('/', (req, res) => {
                 }
                 
                 if (!/^\\d+$/.test(phone)) {
-                    showResult('error', 'Only numbers allowed');
+                    showResult('error', 'Only numbers allowed (no spaces, no +)');
+                    return;
+                }
+                
+                if (phone.length < 10 || phone.length > 15) {
+                    showResult('error', 'Phone number should be 10-15 digits');
                     return;
                 }
                 
@@ -225,20 +237,21 @@ app.get('/', (req, res) => {
                         result.innerHTML = 
                             '<strong>✅ Your Pairing Code:</strong><br>' +
                             '<div class="pairing-code">' + data.code + '</div>' +
-                            '<p>📱 Open WhatsApp → Linked Devices → Link a Device</p>' +
+                            '<p>📱 Open <strong>WhatsApp → Linked Devices → Link a Device</strong></p>' +
                             '<p>Enter the code above</p>' +
-                            '<p style="margin-top: 10px; color: #28a745;">⏳ After pairing, session ID will be sent to your DM!</p>';
+                            '<p class="success-message">⏳ After pairing, session ID will be sent to your DM!</p>';
                         
                         // Hide the form
-                        document.getElementById('pairForm').style.display = 'none';
+                        pairForm.style.display = 'none';
                     } else {
                         showResult('error', data.message || 'Failed to generate code');
+                        submitBtn.disabled = false;
                     }
                 } catch (error) {
                     showResult('error', 'Server error. Please try again.');
                     console.error('Error:', error);
-                } finally {
                     submitBtn.disabled = false;
+                } finally {
                     loading.style.display = 'none';
                 }
             }
@@ -257,6 +270,9 @@ app.get('/', (req, res) => {
 
 // API endpoint for REAL WhatsApp pairing
 app.post('/pair', async (req, res) => {
+    let sock = null;
+    let sessionId = null;
+    
     try {
         const { phone } = req.body;
         
@@ -267,7 +283,7 @@ app.post('/pair', async (req, res) => {
         console.log(`🔑 Generating pairing code for: ${phone}`);
         
         // Generate a unique session ID
-        const sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+        sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
         
         // Create session folder
         const sessionDir = path.join(__dirname, 'sessions', sessionId);
@@ -275,14 +291,21 @@ app.post('/pair', async (req, res) => {
             fs.mkdirSync(sessionDir, { recursive: true });
         }
         
+        // Get latest version
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`Using Baileys version: ${version}`);
+        
         // Setup Baileys
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         
-        const sock = makeWASocket({
+        sock = makeWASocket({
+            version,
             auth: state,
             printQRInTerminal: false,
             browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
-            logger: pino({ level: 'silent' })
+            logger: pino({ level: 'error' }), // Only show errors
+            generateHighQualityLinkPreview: false,
+            syncFullHistory: false
         });
         
         // Store session info
@@ -293,9 +316,9 @@ app.post('/pair', async (req, res) => {
             paired: false
         });
         
-        // Listen for connection
+        // Listen for connection updates
         sock.ev.on('connection.update', async (update) => {
-            const { connection } = update;
+            const { connection, lastDisconnect } = update;
             
             if (connection === 'open') {
                 console.log(`✅ User paired successfully: ${phone}`);
@@ -314,16 +337,25 @@ app.post('/pair', async (req, res) => {
                         console.error('Failed to send session ID:', err);
                     }
                     
+                    // Don't close immediately - give time for message to send
                     setTimeout(() => {
-                        sock.ws.close();
+                        sock?.ws?.close();
                         activeSessions.delete(sessionId);
-                    }, 3000);
+                    }, 5000);
                 }
+            }
+            
+            if (connection === 'close') {
+                console.log(`Connection closed for ${phone}`);
+                activeSessions.delete(sessionId);
             }
         });
         
         // Save credentials
         sock.ev.on('creds.update', saveCreds);
+        
+        // Wait a bit for socket to be ready
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Request REAL pairing code
         try {
@@ -333,7 +365,7 @@ app.post('/pair', async (req, res) => {
             // Format code with dash
             const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
             
-            // Send code back to webpage
+            // Send code back to webpage immediately
             return res.json({
                 success: true,
                 code: formattedCode,
@@ -342,15 +374,28 @@ app.post('/pair', async (req, res) => {
             
         } catch (error) {
             console.error('❌ Pairing error:', error);
+            
+            let errorMessage = 'Failed to generate code. ';
+            if (error.message?.includes('rate')) {
+                errorMessage = 'Too many requests. Please wait a few minutes.';
+            } else if (error.message?.includes('invalid')) {
+                errorMessage = 'Invalid phone number format. Use country code without + or spaces.';
+            } else {
+                errorMessage = 'Service temporarily unavailable. Try again in a few minutes.';
+            }
+            
             return res.json({
                 success: false,
-                message: 'Failed to generate code. Make sure number is valid (include country code, no + or spaces)'
+                message: errorMessage
             });
         }
         
     } catch (error) {
         console.error('❌ Server error:', error);
-        return res.json({ success: false, message: 'Server error' });
+        return res.json({ 
+            success: false, 
+            message: 'Server error. Please try again.' 
+        });
     }
 });
 
