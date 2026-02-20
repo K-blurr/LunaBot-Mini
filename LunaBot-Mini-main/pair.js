@@ -1,11 +1,17 @@
-// pair.js - Add this to your LunaBot-Mini folder
+// pair.js - Complete working version with REAL WhatsApp pairing
 const express = require('express');
-const { exec } = require('child_process');
-const fs = require('fs');
+const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const pino = require('pino');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Create sessions folder if it doesn't exist
+if (!fs.existsSync('./sessions')) {
+    fs.mkdirSync('./sessions');
+}
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -243,7 +249,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// API endpoint for pairing
+// API endpoint for REAL WhatsApp pairing
 app.post('/pair', async (req, res) => {
     try {
         const { phone } = req.body;
@@ -252,28 +258,81 @@ app.post('/pair', async (req, res) => {
             return res.json({ success: false, message: 'Phone number required' });
         }
         
-        // Generate a random 8-digit code
-        const pairCode = Math.floor(10000000 + Math.random() * 90000000);
+        console.log(`🔑 Generating pairing code for: ${phone}`);
         
-        // Format the code with dash
-        const formattedCode = pairCode.toString().match(/.{1,4}/g).join('-');
+        // Generate a unique session ID
+        const sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
         
-        // Here you would normally send this to your bot
-        // For now, we'll just return it
-        console.log(`Pairing code for ${phone}: ${formattedCode}`);
+        // Create session folder
+        const sessionDir = path.join(__dirname, 'sessions', sessionId);
+        if (!fs.existsSync(sessionDir)) {
+            fs.mkdirSync(sessionDir, { recursive: true });
+        }
         
-        res.json({
-            success: true,
-            code: formattedCode,
-            message: 'Code generated successfully'
+        // Setup Baileys
+        const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+        
+        const sock = makeWASocket({
+            auth: state,
+            printQRInTerminal: false,
+            browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
+            logger: pino({ level: 'silent' })
         });
         
+        // Listen for connection
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+            
+            if (connection === 'open') {
+                console.log(`✅ Connected for: ${phone}`);
+                
+                // Send session ID to user
+                await sock.sendMessage(phone + '@s.whatsapp.net', {
+                    text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\nAdd this to your Render environment variables:\n\`SESSION_ID=${sessionId}\`\n\n⚠️ Keep this secret!`
+                });
+                
+                // Close connection after 3 seconds
+                setTimeout(() => {
+                    sock.ws.close();
+                }, 3000);
+            }
+        });
+        
+        // Save credentials
+        sock.ev.on('creds.update', saveCreds);
+        
+        // Request REAL pairing code
+        setTimeout(async () => {
+            try {
+                const code = await sock.requestPairingCode(phone);
+                console.log(`✅ Real pairing code for ${phone}: ${code}`);
+                
+                // Format code (add dash in middle)
+                const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+                
+                // Send response to web
+                res.json({
+                    success: true,
+                    code: formattedCode,
+                    message: 'Check WhatsApp for the code'
+                });
+                
+            } catch (error) {
+                console.error('❌ Pairing error:', error);
+                res.json({
+                    success: false,
+                    message: 'Failed to generate code. Check number and try again.'
+                });
+            }
+        }, 2000);
+        
     } catch (error) {
+        console.error('❌ Server error:', error);
         res.json({ success: false, message: 'Server error' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ Pairing server running on port ${PORT}`);
-    console.log(`🌐 Open https://your-render-link.onrender.com in browser`);
+    console.log(`✅ LunaBot Pairing Server running on port ${PORT}`);
+    console.log(`🌐 Open https://lunabot-mini.onrender.com in browser`);
 });
