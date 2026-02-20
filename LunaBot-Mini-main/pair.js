@@ -1,9 +1,10 @@
-// pair.js - COMPLETELY FIXED VERSION
+// pair.js - FIXED VERSION with better WhatsApp connection
 const express = require('express');
 const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
+const { Boom } = require('@hapi/boom');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -127,6 +128,12 @@ app.get('/', (req, res) => {
                 color: #721c24;
                 display: block;
             }
+            .result.warning {
+                background: #fff3cd;
+                border: 1px solid #ffeeba;
+                color: #856404;
+                display: block;
+            }
             .loading {
                 display: none;
                 text-align: center;
@@ -148,8 +155,8 @@ app.get('/', (req, res) => {
             .pairing-code {
                 background: #f8f9fa;
                 border: 2px dashed #667eea;
-                padding: 15px;
-                font-size: 28px;
+                padding: 20px;
+                font-size: 32px;
                 font-family: monospace;
                 text-align: center;
                 letter-spacing: 5px;
@@ -159,6 +166,11 @@ app.get('/', (req, res) => {
             }
             .success-message {
                 color: #28a745;
+                font-weight: bold;
+                margin-top: 15px;
+            }
+            .warning-message {
+                color: #856404;
                 font-weight: bold;
                 margin-top: 15px;
             }
@@ -190,7 +202,7 @@ app.get('/', (req, res) => {
             
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>Generating your code...</p>
+                <p>Connecting to WhatsApp...</p>
             </div>
             
             <div class="result" id="result"></div>
@@ -244,7 +256,11 @@ app.get('/', (req, res) => {
                         // Hide the form
                         pairForm.style.display = 'none';
                     } else {
-                        showResult('error', data.message || 'Failed to generate code');
+                        if (data.type === 'timeout') {
+                            showResult('warning', '⚠️ ' + data.message);
+                        } else {
+                            showResult('error', '❌ ' + data.message);
+                        }
                         submitBtn.disabled = false;
                     }
                 } catch (error) {
@@ -272,6 +288,7 @@ app.get('/', (req, res) => {
 app.post('/pair', async (req, res) => {
     let sock = null;
     let sessionId = null;
+    let timeoutId = null;
     
     try {
         const { phone } = req.body;
@@ -295,7 +312,7 @@ app.post('/pair', async (req, res) => {
         const { version, isLatest } = await fetchLatestBaileysVersion();
         console.log(`Using Baileys version: ${version}`);
         
-        // Setup Baileys
+        // Setup Baileys with keep-alive
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         
         sock = makeWASocket({
@@ -303,9 +320,11 @@ app.post('/pair', async (req, res) => {
             auth: state,
             printQRInTerminal: false,
             browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
-            logger: pino({ level: 'error' }), // Only show errors
+            logger: pino({ level: 'error' }),
             generateHighQualityLinkPreview: false,
-            syncFullHistory: false
+            syncFullHistory: false,
+            defaultQueryTimeoutMs: 60000, // Increase timeout
+            keepAliveIntervalMs: 30000 // Keep connection alive
         });
         
         // Store session info
@@ -313,7 +332,8 @@ app.post('/pair', async (req, res) => {
             sock,
             phone,
             sessionDir,
-            paired: false
+            paired: false,
+            res: res // Store response object to send later if needed
         });
         
         // Listen for connection updates
@@ -337,64 +357,90 @@ app.post('/pair', async (req, res) => {
                         console.error('Failed to send session ID:', err);
                     }
                     
-                    // Don't close immediately - give time for message to send
+                    // Clean up after 10 seconds
                     setTimeout(() => {
                         sock?.ws?.close();
                         activeSessions.delete(sessionId);
-                    }, 5000);
+                    }, 10000);
                 }
             }
             
             if (connection === 'close') {
-                console.log(`Connection closed for ${phone}`);
-                activeSessions.delete(sessionId);
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const isLoggedOut = statusCode === 401;
+                
+                if (isLoggedOut) {
+                    console.log(`Connection closed - logged out for ${phone}`);
+                } else {
+                    console.log(`Connection closed for ${phone} (reconnecting...)`);
+                    // Try to reconnect
+                    // activeSessions.delete(sessionId);
+                }
             }
         });
         
         // Save credentials
         sock.ev.on('creds.update', saveCreds);
         
-        // Wait a bit for socket to be ready
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Wait for socket to be ready
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
-        // Request REAL pairing code
-        try {
-            const code = await sock.requestPairingCode(phone);
-            console.log(`✅ Pairing code for ${phone}: ${code}`);
-            
-            // Format code with dash
-            const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
-            
-            // Send code back to webpage immediately
-            return res.json({
-                success: true,
-                code: formattedCode,
-                message: 'Enter this code in WhatsApp'
-            });
-            
-        } catch (error) {
-            console.error('❌ Pairing error:', error);
-            
-            let errorMessage = 'Failed to generate code. ';
-            if (error.message?.includes('rate')) {
-                errorMessage = 'Too many requests. Please wait a few minutes.';
-            } else if (error.message?.includes('invalid')) {
-                errorMessage = 'Invalid phone number format. Use country code without + or spaces.';
-            } else {
-                errorMessage = 'Service temporarily unavailable. Try again in a few minutes.';
-            }
-            
-            return res.json({
-                success: false,
-                message: errorMessage
-            });
-        }
+        // Set a timeout for the pairing request
+        const pairingPromise = sock.requestPairingCode(phone);
+        
+        // Race between pairing and timeout
+        const code = await Promise.race([
+            pairingPromise,
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('TIMEOUT')), 30000)
+            )
+        ]);
+        
+        console.log(`✅ Pairing code for ${phone}: ${code}`);
+        
+        // Format code with dash
+        const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+        
+        // Send code back to webpage immediately
+        return res.json({
+            success: true,
+            code: formattedCode,
+            message: 'Enter this code in WhatsApp'
+        });
         
     } catch (error) {
-        console.error('❌ Server error:', error);
-        return res.json({ 
-            success: false, 
-            message: 'Server error. Please try again.' 
+        console.error('❌ Pairing error:', error);
+        
+        // Clean up
+        if (sock) {
+            sock.ws?.close();
+        }
+        if (sessionId) {
+            activeSessions.delete(sessionId);
+        }
+        
+        let errorMessage = 'Failed to generate code. ';
+        let errorType = 'error';
+        
+        if (error.message === 'TIMEOUT') {
+            errorMessage = 'Connection timeout. WhatsApp might be blocking this request. Try again in 10-15 minutes.';
+            errorType = 'timeout';
+        } else if (error.message?.includes('rate')) {
+            errorMessage = 'Too many requests. Please wait 15 minutes and try again.';
+            errorType = 'timeout';
+        } else if (error.message?.includes('invalid')) {
+            errorMessage = 'Invalid phone number format. Use country code without + or spaces.';
+        } else if (error.message?.includes('block')) {
+            errorMessage = 'WhatsApp has temporarily blocked pairing from this server. Try again in 30 minutes.';
+            errorType = 'timeout';
+        } else {
+            errorMessage = 'Service temporarily unavailable. Try again in a few minutes.';
+        }
+        
+        return res.json({
+            success: false,
+            type: errorType,
+            message: errorMessage
         });
     }
 });
