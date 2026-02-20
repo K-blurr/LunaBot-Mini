@@ -1,4 +1,4 @@
-// pair.js - Complete working version
+// pair.js - COMPLETELY FIXED VERSION
 const express = require('express');
 const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
@@ -222,18 +222,21 @@ app.get('/', (req, res) => {
                     
                     if (data.success) {
                         result.className = 'result success';
-                        result.innerHTML = \`
-                            <strong>✅ Your Pairing Code:</strong><br>
-                            <div class="pairing-code">\${data.code}</div>
-                            <p>📱 Open WhatsApp → Linked Devices → Link a Device</p>
-                            <p>Enter the code above</p>
-                            <p style="margin-top: 10px; color: #28a745;">⏳ After pairing, session ID will be sent to your DM!</p>
-                        \`;
+                        result.innerHTML = 
+                            '<strong>✅ Your Pairing Code:</strong><br>' +
+                            '<div class="pairing-code">' + data.code + '</div>' +
+                            '<p>📱 Open WhatsApp → Linked Devices → Link a Device</p>' +
+                            '<p>Enter the code above</p>' +
+                            '<p style="margin-top: 10px; color: #28a745;">⏳ After pairing, session ID will be sent to your DM!</p>';
+                        
+                        // Hide the form
+                        document.getElementById('pairForm').style.display = 'none';
                     } else {
                         showResult('error', data.message || 'Failed to generate code');
                     }
                 } catch (error) {
                     showResult('error', 'Server error. Please try again.');
+                    console.error('Error:', error);
                 } finally {
                     submitBtn.disabled = false;
                     loading.style.display = 'none';
@@ -292,24 +295,25 @@ app.post('/pair', async (req, res) => {
         
         // Listen for connection
         sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection } = update;
             
             if (connection === 'open') {
                 console.log(`✅ User paired successfully: ${phone}`);
                 
-                // Mark as paired
                 const session = activeSessions.get(sessionId);
                 if (session && !session.paired) {
                     session.paired = true;
                     
-                    // Send session ID to user's DM
-                    await sock.sendMessage(phone + '@s.whatsapp.net', {
-                        text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\nAdd this to your Render environment variables:\n\`SESSION_ID=${sessionId}\`\n\n⚠️ Keep this secret!`
-                    });
+                    try {
+                        // Send session ID to user's DM
+                        await sock.sendMessage(phone + '@s.whatsapp.net', {
+                            text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\n⚠️ Keep this secret!`
+                        });
+                        console.log(`✅ Session ID sent to ${phone}`);
+                    } catch (err) {
+                        console.error('Failed to send session ID:', err);
+                    }
                     
-                    console.log(`✅ Session ID sent to ${phone}`);
-                    
-                    // Close connection after sending
                     setTimeout(() => {
                         sock.ws.close();
                         activeSessions.delete(sessionId);
@@ -321,16 +325,16 @@ app.post('/pair', async (req, res) => {
         // Save credentials
         sock.ev.on('creds.update', saveCreds);
         
-        // Request REAL pairing code and show on webpage
+        // Request REAL pairing code
         try {
             const code = await sock.requestPairingCode(phone);
             console.log(`✅ Pairing code for ${phone}: ${code}`);
             
-            // Format code (add dash in middle)
+            // Format code with dash
             const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
             
-            // Send code to webpage (NOT to DM)
-            res.json({
+            // Send code back to webpage
+            return res.json({
                 success: true,
                 code: formattedCode,
                 message: 'Enter this code in WhatsApp'
@@ -338,7 +342,7 @@ app.post('/pair', async (req, res) => {
             
         } catch (error) {
             console.error('❌ Pairing error:', error);
-            res.json({
+            return res.json({
                 success: false,
                 message: 'Failed to generate code. Make sure number is valid (include country code, no + or spaces)'
             });
@@ -346,7 +350,7 @@ app.post('/pair', async (req, res) => {
         
     } catch (error) {
         console.error('❌ Server error:', error);
-        res.json({ success: false, message: 'Server error' });
+        return res.json({ success: false, message: 'Server error' });
     }
 });
 
