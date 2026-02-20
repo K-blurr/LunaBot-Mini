@@ -1,18 +1,19 @@
-// pair.js - LunaBot Mini with Dual Mode (Pair Code + QR Code)
+// pair.js - COMPLETELY FIXED with 3 minute timeout
 const express = require('express');
 const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
+const { Boom } = require('@hapi/boom');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Store active sessions temporarily
+// Store active sessions
 const activeSessions = new Map();
 
-// Create sessions folder if it doesn't exist
+// Create sessions folder
 if (!fs.existsSync('./sessions')) {
     fs.mkdirSync('./sessions');
 }
@@ -262,13 +263,6 @@ app.get('/', (req, res) => {
                 display: block;
             }
             
-            .result.warning {
-                background: #fff3cd;
-                border: 1px solid #ffeeba;
-                color: #856404;
-                display: block;
-            }
-            
             .info-text {
                 font-size: 12px;
                 color: #888;
@@ -292,6 +286,17 @@ app.get('/', (req, res) => {
             .footer a:hover {
                 text-decoration: underline;
             }
+            
+            .warning-box {
+                background: #fff3cd;
+                border: 1px solid #ffeeba;
+                color: #856404;
+                padding: 15px;
+                border-radius: 12px;
+                margin: 20px 0;
+                font-size: 14px;
+                text-align: center;
+            }
         </style>
     </head>
     <body>
@@ -309,8 +314,8 @@ app.get('/', (req, res) => {
                 <form id="pairForm" onsubmit="event.preventDefault(); generatePair();">
                     <div class="form-group">
                         <label>Enter your WhatsApp number with country code</label>
-                        <input type="tel" id="phone" placeholder="233594025845" required>
-                        <div class="info-text">Example: 233 for Ghana, 234 for Nigeria, 91 for India, 1 for USA</div>
+                        <input type="tel" id="phone" placeholder="233546785467" required>
+                        <div class="info-text">Example: 234 for Nigeria, 233 for Ghana, 91 for India, 1 for USA</div>
                     </div>
                     
                     <button type="submit" id="pairBtn">Generate Pair Code</button>
@@ -318,13 +323,17 @@ app.get('/', (req, res) => {
                 
                 <div class="loading" id="pairLoading">
                     <div class="spinner"></div>
-                    <p>Generating your pair code...</p>
+                    <p>Connecting to WhatsApp...</p>
+                    <p style="font-size: 12px; color: #666;">This may take 10-20 seconds</p>
                 </div>
                 
                 <div id="pairResult" class="result"></div>
                 <div id="pairCodeDisplay" style="display: none;">
                     <div class="pairing-code" id="pairCode"></div>
                     <button class="copy-btn" onclick="copyPairCode()">Copy Code</button>
+                    <div class="warning-box" style="margin-top: 15px;">
+                        ⏳ After entering this code in WhatsApp, wait 2-3 minutes for the session ID to arrive in your DM
+                    </div>
                 </div>
             </div>
             
@@ -333,8 +342,8 @@ app.get('/', (req, res) => {
                 <form id="qrForm" onsubmit="event.preventDefault(); generateQR();">
                     <div class="form-group">
                         <label>Enter your WhatsApp number with country code</label>
-                        <input type="tel" id="qrPhone" placeholder="233594025845" required>
-                        <div class="info-text">Example: 233 for Ghana, 234 for Nigeria, 91 for India, 1 for USA</div>
+                        <input type="tel" id="qrPhone" placeholder="2348012345678" required>
+                        <div class="info-text">Example: 234 for Nigeria, 233 for Ghana, 91 for India, 1 for USA</div>
                     </div>
                     
                     <button type="submit" id="qrBtn">Generate QR Code</button>
@@ -342,13 +351,15 @@ app.get('/', (req, res) => {
                 
                 <div class="loading" id="qrLoading">
                     <div class="spinner"></div>
-                    <p>Generating your QR code...</p>
+                    <p>Generating QR code...</p>
                 </div>
                 
                 <div class="qr-container" id="qrContainer">
                     <div class="qr-placeholder" id="qrPlaceholder">Your QR code will appear here</div>
                     <div id="qrCode" style="display: none;"></div>
                 </div>
+                
+                <div id="qrResult" class="result"></div>
             </div>
             
             <div class="footer">
@@ -360,11 +371,9 @@ app.get('/', (req, res) => {
             let currentPairCode = '';
             
             function switchMode(mode) {
-                // Update buttons
                 document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
                 event.target.classList.add('active');
                 
-                // Update content
                 document.getElementById('pairMode').classList.remove('active');
                 document.getElementById('qrMode').classList.remove('active');
                 
@@ -417,14 +426,17 @@ app.get('/', (req, res) => {
                         document.getElementById('pairCode').innerText = data.code;
                         codeDisplay.style.display = 'block';
                         pairForm.style.display = 'none';
+                        
+                        // Show waiting message
+                        showResult('pairResult', 'success', '✅ Code generated! Enter it in WhatsApp and wait 2-3 minutes for session ID in your DM');
                     } else {
                         showResult('pairResult', 'error', data.message || 'Failed to generate code');
                         pairBtn.disabled = false;
+                        loading.style.display = 'none';
                     }
                 } catch (error) {
                     showResult('pairResult', 'error', 'Server error. Please try again.');
                     pairBtn.disabled = false;
-                } finally {
                     loading.style.display = 'none';
                 }
             }
@@ -436,15 +448,20 @@ app.get('/', (req, res) => {
                 const qrContainer = document.getElementById('qrContainer');
                 const qrPlaceholder = document.getElementById('qrPlaceholder');
                 const qrCode = document.getElementById('qrCode');
+                const qrResult = document.getElementById('qrResult');
                 const qrForm = document.getElementById('qrForm');
                 
                 if (!phone) {
-                    alert('Please enter your phone number');
+                    qrResult.className = 'result error';
+                    qrResult.innerHTML = 'Please enter your phone number';
+                    qrResult.style.display = 'block';
                     return;
                 }
                 
                 if (!/^\\d+$/.test(phone)) {
-                    alert('Only numbers allowed (no spaces, no +)');
+                    qrResult.className = 'result error';
+                    qrResult.innerHTML = 'Only numbers allowed (no spaces, no +)';
+                    qrResult.style.display = 'block';
                     return;
                 }
                 
@@ -452,6 +469,7 @@ app.get('/', (req, res) => {
                 loading.style.display = 'block';
                 qrPlaceholder.style.display = 'none';
                 qrCode.style.display = 'none';
+                qrResult.style.display = 'none';
                 
                 try {
                     const response = await fetch('/qr', {
@@ -463,18 +481,30 @@ app.get('/', (req, res) => {
                     const data = await response.json();
                     
                     if (data.success) {
-                        qrCode.innerHTML = '<img src="' + data.qr + '" alt="QR Code">';
+                        qrCode.innerHTML = '<img src="' + data.qr + '" alt="QR Code" style="width: 100%;">';
                         qrCode.style.display = 'block';
                         qrForm.style.display = 'none';
+                        
+                        qrResult.className = 'result success';
+                        qrResult.innerHTML = '✅ Scan this QR code with WhatsApp';
+                        qrResult.style.display = 'block';
                     } else {
                         qrPlaceholder.innerText = data.message || 'Failed to generate QR';
                         qrPlaceholder.style.display = 'block';
                         qrBtn.disabled = false;
+                        
+                        qrResult.className = 'result error';
+                        qrResult.innerHTML = data.message || 'Failed to generate QR';
+                        qrResult.style.display = 'block';
                     }
                 } catch (error) {
                     qrPlaceholder.innerText = 'Server error. Please try again.';
                     qrPlaceholder.style.display = 'block';
                     qrBtn.disabled = false;
+                    
+                    qrResult.className = 'result error';
+                    qrResult.innerHTML = 'Server error. Please try again.';
+                    qrResult.style.display = 'block';
                 } finally {
                     loading.style.display = 'none';
                 }
@@ -500,8 +530,15 @@ app.get('/', (req, res) => {
     `);
 });
 
+// Keep track of active connections to prevent premature closing
+const connections = new Map();
+
 // Pair Code Endpoint
 app.post('/pair', async (req, res) => {
+    let sock = null;
+    let sessionId = null;
+    let timeoutId = null;
+    
     try {
         const { phone } = req.body;
         
@@ -511,7 +548,7 @@ app.post('/pair', async (req, res) => {
         
         console.log(`🔑 Generating pairing code for: ${phone}`);
         
-        const sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+        sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
         const sessionDir = path.join(__dirname, 'sessions', sessionId);
         
         if (!fs.existsSync(sessionDir)) {
@@ -521,67 +558,138 @@ app.post('/pair', async (req, res) => {
         const { version } = await fetchLatestBaileysVersion();
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         
-        const sock = makeWASocket({
+        // Create socket with keep-alive settings
+        sock = makeWASocket({
             version,
             auth: state,
             printQRInTerminal: false,
             browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
-            logger: pino({ level: 'error' })
+            logger: pino({ level: 'error' }),
+            keepAliveIntervalMs: 30000, // Keep connection alive
+            defaultQueryTimeoutMs: 60000 // Longer timeout
         });
         
-        // Store session
-        activeSessions.set(sessionId, { sock, phone, sessionDir, paired: false });
+        // Store connection
+        connections.set(sessionId, { sock, phone, paired: false });
         
-        // Handle connection
+        // Handle connection updates
         sock.ev.on('connection.update', async (update) => {
-            const { connection } = update;
+            const { connection, lastDisconnect } = update;
             
             if (connection === 'open') {
-                const session = activeSessions.get(sessionId);
-                if (session && !session.paired) {
-                    session.paired = true;
+                console.log(`✅ User paired successfully: ${phone}`);
+                
+                const conn = connections.get(sessionId);
+                if (conn && !conn.paired) {
+                    conn.paired = true;
                     
                     try {
+                        // Send session ID to user's DM
                         await sock.sendMessage(phone + '@s.whatsapp.net', {
                             text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\n⚠️ Keep this secret!`
                         });
                         console.log(`✅ Session ID sent to ${phone}`);
+                        
+                        // Keep connection alive a bit longer to ensure message is delivered
+                        setTimeout(() => {
+                            sock?.ws?.close();
+                            connections.delete(sessionId);
+                        }, 10000);
                     } catch (err) {
                         console.error('Failed to send session ID:', err);
                     }
-                    
-                    setTimeout(() => {
-                        sock?.ws?.close();
-                        activeSessions.delete(sessionId);
-                    }, 5000);
+                }
+            }
+            
+            if (connection === 'close') {
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                console.log(`Connection closed for ${phone} (${statusCode || 'unknown'})`);
+                
+                // Only delete if not paired yet (will retry)
+                const conn = connections.get(sessionId);
+                if (conn && !conn.paired) {
+                    console.log(`Pairing not completed for ${phone}, will retry...`);
+                } else {
+                    connections.delete(sessionId);
                 }
             }
         });
         
+        // Save credentials
         sock.ev.on('creds.update', saveCreds);
         
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for socket to be ready
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
-        const code = await sock.requestPairingCode(phone);
+        // Request pairing code with retry logic
+        let code;
+        let retries = 3;
+        
+        while (retries > 0) {
+            try {
+                code = await sock.requestPairingCode(phone);
+                break;
+            } catch (err) {
+                retries--;
+                console.log(`Retry ${3-retries}/3 for ${phone}`);
+                if (retries === 0) throw err;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+        
+        console.log(`✅ Pairing code for ${phone}: ${code}`);
+        
         const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
         
-        return res.json({
+        // Send response immediately
+        res.json({
             success: true,
             code: formattedCode,
             message: 'Enter this code in WhatsApp'
         });
         
+        // Keep connection alive for 3 minutes to allow pairing
+        setTimeout(() => {
+            const conn = connections.get(sessionId);
+            if (conn && !conn.paired) {
+                console.log(`Closing connection for ${phone} (no pairing detected after 3 minutes)`);
+                sock?.ws?.close();
+                connections.delete(sessionId);
+            }
+        }, 180000); // 3 minutes
+        
     } catch (error) {
         console.error('❌ Pairing error:', error);
+        
+        // Clean up
+        if (sock) {
+            sock.ws?.close();
+        }
+        if (sessionId) {
+            connections.delete(sessionId);
+        }
+        
+        let errorMessage = 'Failed to generate code. ';
+        if (error.message?.includes('rate')) {
+            errorMessage = 'Too many requests. Please wait 10 minutes and try again.';
+        } else if (error.message?.includes('invalid')) {
+            errorMessage = 'Invalid phone number format.';
+        } else {
+            errorMessage = 'Service temporarily unavailable. Try again in a few minutes.';
+        }
+        
         return res.json({
             success: false,
-            message: 'Failed to generate code. Try again in a few minutes.'
+            message: errorMessage
         });
     }
 });
 
 // QR Code Endpoint
 app.post('/qr', async (req, res) => {
+    let sock = null;
+    let sessionId = null;
+    
     try {
         const { phone } = req.body;
         
@@ -591,7 +699,7 @@ app.post('/qr', async (req, res) => {
         
         console.log(`📱 Generating QR code for: ${phone}`);
         
-        const sessionId = 'LunaBot_QR_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+        sessionId = 'LunaBot_QR_' + Date.now() + '_' + Math.random().toString(36).substring(7);
         const sessionDir = path.join(__dirname, 'sessions', sessionId);
         
         if (!fs.existsSync(sessionDir)) {
@@ -601,26 +709,30 @@ app.post('/qr', async (req, res) => {
         const { version } = await fetchLatestBaileysVersion();
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         
-        const sock = makeWASocket({
+        sock = makeWASocket({
             version,
             auth: state,
             printQRInTerminal: false,
             browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
-            logger: pino({ level: 'error' })
+            logger: pino({ level: 'error' }),
+            keepAliveIntervalMs: 30000
         });
         
-        let qrCodeData = null;
+        connections.set(sessionId, { sock, phone, paired: false });
         
+        let qrSent = false;
+        
+        // Handle connection updates
         sock.ev.on('connection.update', async (update) => {
-            const { connection, qr } = update;
+            const { connection, qr, lastDisconnect } = update;
             
-            if (qr) {
-                qrCodeData = qr;
+            if (qr && !qrSent) {
+                qrSent = true;
                 const qrImage = await QRCode.toDataURL(qr);
                 
-                // Send QR to client if not already sent
+                // Send QR to client
                 if (!res.headersSent) {
-                    return res.json({
+                    res.json({
                         success: true,
                         qr: qrImage,
                         message: 'Scan this QR code'
@@ -631,37 +743,62 @@ app.post('/qr', async (req, res) => {
             if (connection === 'open') {
                 console.log(`✅ QR user paired: ${phone}`);
                 
-                try {
-                    await sock.sendMessage(phone + '@s.whatsapp.net', {
-                        text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\n⚠️ Keep this secret!`
-                    });
-                    console.log(`✅ Session ID sent to ${phone}`);
-                } catch (err) {
-                    console.error('Failed to send session ID:', err);
+                const conn = connections.get(sessionId);
+                if (conn && !conn.paired) {
+                    conn.paired = true;
+                    
+                    try {
+                        await sock.sendMessage(phone + '@s.whatsapp.net', {
+                            text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\n⚠️ Keep this secret!`
+                        });
+                        console.log(`✅ Session ID sent to ${phone}`);
+                        
+                        setTimeout(() => {
+                            sock?.ws?.close();
+                            connections.delete(sessionId);
+                        }, 10000);
+                    } catch (err) {
+                        console.error('Failed to send session ID:', err);
+                    }
                 }
-                
-                setTimeout(() => sock?.ws?.close(), 5000);
+            }
+            
+            if (connection === 'close') {
+                console.log(`QR connection closed for ${phone}`);
+                connections.delete(sessionId);
             }
         });
         
         sock.ev.on('creds.update', saveCreds);
         
-        // Wait for QR or timeout
+        // Set timeout for QR generation
         setTimeout(() => {
             if (!res.headersSent) {
-                return res.json({
+                res.json({
                     success: false,
-                    message: 'QR generation timeout. Try again.'
+                    message: 'QR generation timeout. Please try again.'
                 });
+                sock?.ws?.close();
+                connections.delete(sessionId);
             }
         }, 30000);
         
     } catch (error) {
         console.error('❌ QR error:', error);
-        return res.json({
-            success: false,
-            message: 'Failed to generate QR code.'
-        });
+        
+        if (sock) {
+            sock.ws?.close();
+        }
+        if (sessionId) {
+            connections.delete(sessionId);
+        }
+        
+        if (!res.headersSent) {
+            return res.json({
+                success: false,
+                message: 'Failed to generate QR code.'
+            });
+        }
     }
 });
 
