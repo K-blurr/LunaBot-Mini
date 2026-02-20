@@ -1,4 +1,4 @@
-// pair.js - Complete working version with REAL WhatsApp pairing
+// pair.js - Complete working version
 const express = require('express');
 const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
@@ -7,6 +7,9 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Store active sessions temporarily
+const activeSessions = new Map();
 
 // Create sessions folder if it doesn't exist
 if (!fs.existsSync('./sessions')) {
@@ -163,9 +166,9 @@ app.get('/', (req, res) => {
             <div class="info">
                 <strong>📱 How it works:</strong><br>
                 1. Enter your phone number<br>
-                2. Get 8-digit code<br>
+                2. Get 8-digit code on THIS page<br>
                 3. Open WhatsApp → Linked Devices<br>
-                4. Enter code<br>
+                4. Enter the code<br>
                 5. Session ID arrives in your DM!
             </div>
             
@@ -181,7 +184,7 @@ app.get('/', (req, res) => {
             
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p>Processing... Check your WhatsApp</p>
+                <p>Generating your code...</p>
             </div>
             
             <div class="result" id="result"></div>
@@ -220,11 +223,11 @@ app.get('/', (req, res) => {
                     if (data.success) {
                         result.className = 'result success';
                         result.innerHTML = \`
-                            <strong>✅ Code Generated!</strong><br>
+                            <strong>✅ Your Pairing Code:</strong><br>
                             <div class="pairing-code">\${data.code}</div>
                             <p>📱 Open WhatsApp → Linked Devices → Link a Device</p>
                             <p>Enter the code above</p>
-                            <p style="margin-top: 10px;">After pairing, session ID will be sent to your DM!</p>
+                            <p style="margin-top: 10px; color: #28a745;">⏳ After pairing, session ID will be sent to your DM!</p>
                         \`;
                     } else {
                         showResult('error', data.message || 'Failed to generate code');
@@ -279,52 +282,67 @@ app.post('/pair', async (req, res) => {
             logger: pino({ level: 'silent' })
         });
         
+        // Store session info
+        activeSessions.set(sessionId, {
+            sock,
+            phone,
+            sessionDir,
+            paired: false
+        });
+        
         // Listen for connection
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
             
             if (connection === 'open') {
-                console.log(`✅ Connected for: ${phone}`);
+                console.log(`✅ User paired successfully: ${phone}`);
                 
-                // Send session ID to user
-                await sock.sendMessage(phone + '@s.whatsapp.net', {
-                    text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\nAdd this to your Render environment variables:\n\`SESSION_ID=${sessionId}\`\n\n⚠️ Keep this secret!`
-                });
-                
-                // Close connection after 3 seconds
-                setTimeout(() => {
-                    sock.ws.close();
-                }, 3000);
+                // Mark as paired
+                const session = activeSessions.get(sessionId);
+                if (session && !session.paired) {
+                    session.paired = true;
+                    
+                    // Send session ID to user's DM
+                    await sock.sendMessage(phone + '@s.whatsapp.net', {
+                        text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\nAdd this to your Render environment variables:\n\`SESSION_ID=${sessionId}\`\n\n⚠️ Keep this secret!`
+                    });
+                    
+                    console.log(`✅ Session ID sent to ${phone}`);
+                    
+                    // Close connection after sending
+                    setTimeout(() => {
+                        sock.ws.close();
+                        activeSessions.delete(sessionId);
+                    }, 3000);
+                }
             }
         });
         
         // Save credentials
         sock.ev.on('creds.update', saveCreds);
         
-        // Request REAL pairing code
-        setTimeout(async () => {
-            try {
-                const code = await sock.requestPairingCode(phone);
-                console.log(`✅ Real pairing code for ${phone}: ${code}`);
-                
-                // Format code (add dash in middle)
-                const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
-                
-                // Send response to web
-                res.json({
-                    success: true,
-                    code: formattedCode,
-                    message: 'Check WhatsApp for the code'
-                });
-                
-            } catch (error) {
-                console.error('❌ Pairing error:', error);
-                res.json({
-                    success: false,
-                    message: 'Failed to generate code. Check number and try again.'
-                });
-            }
-        }, 2000);
+        // Request REAL pairing code and show on webpage
+        try {
+            const code = await sock.requestPairingCode(phone);
+            console.log(`✅ Pairing code for ${phone}: ${code}`);
+            
+            // Format code (add dash in middle)
+            const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
+            
+            // Send code to webpage (NOT to DM)
+            res.json({
+                success: true,
+                code: formattedCode,
+                message: 'Enter this code in WhatsApp'
+            });
+            
+        } catch (error) {
+            console.error('❌ Pairing error:', error);
+            res.json({
+                success: false,
+                message: 'Failed to generate code. Make sure number is valid (include country code, no + or spaces)'
+            });
+        }
         
     } catch (error) {
         console.error('❌ Server error:', error);
