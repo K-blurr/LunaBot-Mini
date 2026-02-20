@@ -48,7 +48,7 @@ You are free to modify, rebrand, and deploy this bot.
 
 <div align="center">
 
-<a href="https://YOUR-RENDER-LINK.onrender.com">
+<a href="https://lunabot-mini.onrender.com">
   <img src="https://img.shields.io/badge/Generate-Pair_Code-blueviolet?style=for-the-badge">
 </a>
 
