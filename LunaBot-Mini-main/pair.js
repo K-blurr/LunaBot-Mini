@@ -1,10 +1,10 @@
-// pair.js - FIXED VERSION with better WhatsApp connection
+// pair.js - LunaBot Mini with Dual Mode (Pair Code + QR Code)
 const express = require('express');
 const { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
-const { Boom } = require('@hapi/boom');
+const QRCode = require('qrcode');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,134 +24,178 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
-        <title>LunaBot Mini - Pairing</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>LunaBot Mini - Pairing</title>
         <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
             body {
-                font-family: Arial, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 min-height: 100vh;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                margin: 0;
                 padding: 20px;
             }
+            
             .container {
-                background: white;
-                border-radius: 15px;
-                padding: 40px;
-                max-width: 400px;
+                max-width: 500px;
                 width: 100%;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 30px;
+                padding: 30px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             }
+            
             h1 {
                 text-align: center;
                 color: #333;
+                font-size: 28px;
                 margin-bottom: 10px;
             }
+            
+            h1 span {
+                color: #667eea;
+            }
+            
             .subtitle {
                 text-align: center;
                 color: #666;
                 margin-bottom: 30px;
                 font-size: 14px;
             }
+            
+            .mode-switch {
+                display: flex;
+                background: #f0f0f0;
+                border-radius: 50px;
+                padding: 5px;
+                margin-bottom: 30px;
+            }
+            
+            .mode-btn {
+                flex: 1;
+                padding: 12px;
+                border: none;
+                background: transparent;
+                border-radius: 50px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.3s;
+                color: #666;
+            }
+            
+            .mode-btn.active {
+                background: white;
+                color: #667eea;
+                box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            }
+            
+            .mode-content {
+                display: none;
+                animation: fadeIn 0.5s;
+            }
+            
+            .mode-content.active {
+                display: block;
+            }
+            
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            
             .form-group {
                 margin-bottom: 20px;
             }
+            
             label {
                 display: block;
                 margin-bottom: 8px;
                 color: #555;
-                font-weight: bold;
+                font-weight: 500;
+                font-size: 14px;
             }
+            
             input {
                 width: 100%;
-                padding: 12px;
+                padding: 15px;
                 border: 2px solid #e0e0e0;
-                border-radius: 8px;
+                border-radius: 12px;
                 font-size: 16px;
-                box-sizing: border-box;
+                transition: all 0.3s;
+                background: white;
             }
+            
             input:focus {
                 outline: none;
                 border-color: #667eea;
+                box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
             }
+            
             button {
                 width: 100%;
-                padding: 14px;
-                background: #667eea;
+                padding: 15px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
                 border: none;
-                border-radius: 8px;
+                border-radius: 12px;
                 font-size: 16px;
-                font-weight: bold;
+                font-weight: 600;
                 cursor: pointer;
-                transition: background 0.3s;
+                transition: transform 0.2s, box-shadow 0.2s;
             }
+            
             button:hover {
-                background: #764ba2;
+                transform: translateY(-2px);
+                box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
             }
+            
             button:disabled {
-                background: #ccc;
+                opacity: 0.6;
                 cursor: not-allowed;
+                transform: none;
             }
-            .info {
-                background: #e3f2fd;
-                border-left: 4px solid #2196f3;
-                padding: 12px;
-                margin: 20px 0;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            .info strong {
-                color: #1976d2;
-            }
-            .result {
-                margin-top: 20px;
-                padding: 15px;
-                border-radius: 8px;
-                display: none;
-            }
-            .result.success {
-                background: #d4edda;
-                border: 1px solid #c3e6cb;
-                color: #155724;
-                display: block;
-            }
-            .result.error {
-                background: #f8d7da;
-                border: 1px solid #f5c6cb;
-                color: #721c24;
-                display: block;
-            }
-            .result.warning {
-                background: #fff3cd;
-                border: 1px solid #ffeeba;
-                color: #856404;
-                display: block;
-            }
-            .loading {
-                display: none;
+            
+            .qr-container {
+                background: #f8f9fa;
+                border-radius: 20px;
+                padding: 30px;
                 text-align: center;
                 margin: 20px 0;
+                min-height: 300px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
             }
-            .spinner {
-                border: 4px solid #f3f3f3;
-                border-top: 4px solid #667eea;
-                border-radius: 50%;
-                width: 40px;
-                height: 40px;
-                animation: spin 1s linear infinite;
-                margin: 0 auto 10px;
+            
+            .qr-placeholder {
+                color: #999;
+                font-size: 14px;
             }
-            @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
+            
+            .qr-code {
+                max-width: 250px;
+                margin: 0 auto;
             }
+            
+            .qr-code img {
+                width: 100%;
+                height: auto;
+                border-radius: 10px;
+            }
+            
             .pairing-code {
                 background: #f8f9fa;
                 border: 2px dashed #667eea;
@@ -159,81 +203,205 @@ app.get('/', (req, res) => {
                 font-size: 32px;
                 font-family: monospace;
                 text-align: center;
-                letter-spacing: 5px;
-                margin: 15px 0;
-                border-radius: 8px;
+                letter-spacing: 8px;
+                margin: 20px 0;
+                border-radius: 12px;
                 font-weight: bold;
             }
-            .success-message {
-                color: #28a745;
-                font-weight: bold;
-                margin-top: 15px;
+            
+            .copy-btn {
+                background: #28a745;
+                margin-top: 10px;
+                padding: 12px;
+                font-size: 14px;
             }
-            .warning-message {
+            
+            .copy-btn:hover {
+                background: #218838;
+            }
+            
+            .loading {
+                display: none;
+                text-align: center;
+                margin: 20px 0;
+            }
+            
+            .spinner {
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #667eea;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 15px;
+            }
+            
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            
+            .result {
+                margin-top: 20px;
+                padding: 15px;
+                border-radius: 12px;
+                display: none;
+            }
+            
+            .result.success {
+                background: #d4edda;
+                border: 1px solid #c3e6cb;
+                color: #155724;
+                display: block;
+            }
+            
+            .result.error {
+                background: #f8d7da;
+                border: 1px solid #f5c6cb;
+                color: #721c24;
+                display: block;
+            }
+            
+            .result.warning {
+                background: #fff3cd;
+                border: 1px solid #ffeeba;
                 color: #856404;
-                font-weight: bold;
-                margin-top: 15px;
+                display: block;
+            }
+            
+            .info-text {
+                font-size: 12px;
+                color: #888;
+                margin-top: 5px;
+            }
+            
+            .footer {
+                text-align: center;
+                margin-top: 30px;
+                color: #888;
+                font-size: 12px;
+                border-top: 1px solid #e0e0e0;
+                padding-top: 20px;
+            }
+            
+            .footer a {
+                color: #667eea;
+                text-decoration: none;
+            }
+            
+            .footer a:hover {
+                text-decoration: underline;
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🌙 LunaBot Mini</h1>
-            <div class="subtitle">Get your session ID in WhatsApp DM</div>
+            <h1>🌙 LunaBot <span>Mini</span></h1>
+            <div class="subtitle">Link your WhatsApp device</div>
             
-            <div class="info">
-                <strong>📱 How it works:</strong><br>
-                1. Enter your phone number<br>
-                2. Get 8-digit code on THIS page<br>
-                3. Open WhatsApp → Linked Devices<br>
-                4. Enter the code<br>
-                5. Session ID arrives in your DM!
+            <div class="mode-switch">
+                <button class="mode-btn active" onclick="switchMode('pair')">Pair Code</button>
+                <button class="mode-btn" onclick="switchMode('qr')">QR Code</button>
             </div>
             
-            <form id="pairForm" onsubmit="event.preventDefault(); generatePair();">
-                <div class="form-group">
-                    <label>Phone Number (with country code)</label>
-                    <input type="tel" id="phone" placeholder="233594025845" required>
-                    <small style="color: #666; display: block; margin-top: 5px;">Example: 233 for Ghana, 234 for Nigeria, 91 for India, 1 for USA</small>
+            <!-- Pair Code Mode -->
+            <div id="pairMode" class="mode-content active">
+                <form id="pairForm" onsubmit="event.preventDefault(); generatePair();">
+                    <div class="form-group">
+                        <label>Enter your WhatsApp number with country code</label>
+                        <input type="tel" id="phone" placeholder="233594025845" required>
+                        <div class="info-text">Example: 233 for Ghana, 234 for Nigeria, 91 for India, 1 for USA</div>
+                    </div>
+                    
+                    <button type="submit" id="pairBtn">Generate Pair Code</button>
+                </form>
+                
+                <div class="loading" id="pairLoading">
+                    <div class="spinner"></div>
+                    <p>Generating your pair code...</p>
                 </div>
                 
-                <button type="submit" id="submitBtn">🔑 Generate Pair Code</button>
-            </form>
-            
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Connecting to WhatsApp...</p>
+                <div id="pairResult" class="result"></div>
+                <div id="pairCodeDisplay" style="display: none;">
+                    <div class="pairing-code" id="pairCode"></div>
+                    <button class="copy-btn" onclick="copyPairCode()">Copy Code</button>
+                </div>
             </div>
             
-            <div class="result" id="result"></div>
+            <!-- QR Code Mode -->
+            <div id="qrMode" class="mode-content">
+                <form id="qrForm" onsubmit="event.preventDefault(); generateQR();">
+                    <div class="form-group">
+                        <label>Enter your WhatsApp number with country code</label>
+                        <input type="tel" id="qrPhone" placeholder="233594025845" required>
+                        <div class="info-text">Example: 233 for Ghana, 234 for Nigeria, 91 for India, 1 for USA</div>
+                    </div>
+                    
+                    <button type="submit" id="qrBtn">Generate QR Code</button>
+                </form>
+                
+                <div class="loading" id="qrLoading">
+                    <div class="spinner"></div>
+                    <p>Generating your QR code...</p>
+                </div>
+                
+                <div class="qr-container" id="qrContainer">
+                    <div class="qr-placeholder" id="qrPlaceholder">Your QR code will appear here</div>
+                    <div id="qrCode" style="display: none;"></div>
+                </div>
+            </div>
+            
+            <div class="footer">
+                © 2026 Kobby Blurr | LunaBot Mini
+            </div>
         </div>
         
         <script>
+            let currentPairCode = '';
+            
+            function switchMode(mode) {
+                // Update buttons
+                document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+                event.target.classList.add('active');
+                
+                // Update content
+                document.getElementById('pairMode').classList.remove('active');
+                document.getElementById('qrMode').classList.remove('active');
+                
+                if (mode === 'pair') {
+                    document.getElementById('pairMode').classList.add('active');
+                } else {
+                    document.getElementById('qrMode').classList.add('active');
+                }
+            }
+            
             async function generatePair() {
                 const phone = document.getElementById('phone').value.trim();
-                const submitBtn = document.getElementById('submitBtn');
-                const loading = document.getElementById('loading');
-                const result = document.getElementById('result');
+                const pairBtn = document.getElementById('pairBtn');
+                const loading = document.getElementById('pairLoading');
+                const result = document.getElementById('pairResult');
+                const codeDisplay = document.getElementById('pairCodeDisplay');
                 const pairForm = document.getElementById('pairForm');
                 
                 if (!phone) {
-                    showResult('error', 'Please enter your phone number');
+                    showResult('pairResult', 'error', 'Please enter your phone number');
                     return;
                 }
                 
                 if (!/^\\d+$/.test(phone)) {
-                    showResult('error', 'Only numbers allowed (no spaces, no +)');
+                    showResult('pairResult', 'error', 'Only numbers allowed (no spaces, no +)');
                     return;
                 }
                 
                 if (phone.length < 10 || phone.length > 15) {
-                    showResult('error', 'Phone number should be 10-15 digits');
+                    showResult('pairResult', 'error', 'Phone number should be 10-15 digits');
                     return;
                 }
                 
-                submitBtn.disabled = true;
+                pairBtn.disabled = true;
                 loading.style.display = 'block';
                 result.style.display = 'none';
+                codeDisplay.style.display = 'none';
                 
                 try {
                     const response = await fetch('/pair', {
@@ -245,35 +413,83 @@ app.get('/', (req, res) => {
                     const data = await response.json();
                     
                     if (data.success) {
-                        result.className = 'result success';
-                        result.innerHTML = 
-                            '<strong>✅ Your Pairing Code:</strong><br>' +
-                            '<div class="pairing-code">' + data.code + '</div>' +
-                            '<p>📱 Open <strong>WhatsApp → Linked Devices → Link a Device</strong></p>' +
-                            '<p>Enter the code above</p>' +
-                            '<p class="success-message">⏳ After pairing, session ID will be sent to your DM!</p>';
-                        
-                        // Hide the form
+                        currentPairCode = data.code;
+                        document.getElementById('pairCode').innerText = data.code;
+                        codeDisplay.style.display = 'block';
                         pairForm.style.display = 'none';
                     } else {
-                        if (data.type === 'timeout') {
-                            showResult('warning', '⚠️ ' + data.message);
-                        } else {
-                            showResult('error', '❌ ' + data.message);
-                        }
-                        submitBtn.disabled = false;
+                        showResult('pairResult', 'error', data.message || 'Failed to generate code');
+                        pairBtn.disabled = false;
                     }
                 } catch (error) {
-                    showResult('error', 'Server error. Please try again.');
-                    console.error('Error:', error);
-                    submitBtn.disabled = false;
+                    showResult('pairResult', 'error', 'Server error. Please try again.');
+                    pairBtn.disabled = false;
                 } finally {
                     loading.style.display = 'none';
                 }
             }
             
-            function showResult(type, message) {
-                const result = document.getElementById('result');
+            async function generateQR() {
+                const phone = document.getElementById('qrPhone').value.trim();
+                const qrBtn = document.getElementById('qrBtn');
+                const loading = document.getElementById('qrLoading');
+                const qrContainer = document.getElementById('qrContainer');
+                const qrPlaceholder = document.getElementById('qrPlaceholder');
+                const qrCode = document.getElementById('qrCode');
+                const qrForm = document.getElementById('qrForm');
+                
+                if (!phone) {
+                    alert('Please enter your phone number');
+                    return;
+                }
+                
+                if (!/^\\d+$/.test(phone)) {
+                    alert('Only numbers allowed (no spaces, no +)');
+                    return;
+                }
+                
+                qrBtn.disabled = true;
+                loading.style.display = 'block';
+                qrPlaceholder.style.display = 'none';
+                qrCode.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/qr', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone: phone })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        qrCode.innerHTML = '<img src="' + data.qr + '" alt="QR Code">';
+                        qrCode.style.display = 'block';
+                        qrForm.style.display = 'none';
+                    } else {
+                        qrPlaceholder.innerText = data.message || 'Failed to generate QR';
+                        qrPlaceholder.style.display = 'block';
+                        qrBtn.disabled = false;
+                    }
+                } catch (error) {
+                    qrPlaceholder.innerText = 'Server error. Please try again.';
+                    qrPlaceholder.style.display = 'block';
+                    qrBtn.disabled = false;
+                } finally {
+                    loading.style.display = 'none';
+                }
+            }
+            
+            function copyPairCode() {
+                navigator.clipboard.writeText(currentPairCode).then(() => {
+                    alert('Code copied to clipboard!');
+                }).catch(() => {
+                    alert('Failed to copy. Please select and copy manually.');
+                });
+            }
+            
+            function showResult(elementId, type, message) {
+                const result = document.getElementById(elementId);
                 result.className = 'result ' + type;
                 result.innerHTML = message;
                 result.style.display = 'block';
@@ -284,12 +500,8 @@ app.get('/', (req, res) => {
     `);
 });
 
-// API endpoint for REAL WhatsApp pairing
+// Pair Code Endpoint
 app.post('/pair', async (req, res) => {
-    let sock = null;
-    let sessionId = null;
-    let timeoutId = null;
-    
     try {
         const { phone } = req.body;
         
@@ -299,56 +511,37 @@ app.post('/pair', async (req, res) => {
         
         console.log(`🔑 Generating pairing code for: ${phone}`);
         
-        // Generate a unique session ID
-        sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
-        
-        // Create session folder
+        const sessionId = 'LunaBot_' + Date.now() + '_' + Math.random().toString(36).substring(7);
         const sessionDir = path.join(__dirname, 'sessions', sessionId);
+        
         if (!fs.existsSync(sessionDir)) {
             fs.mkdirSync(sessionDir, { recursive: true });
         }
         
-        // Get latest version
-        const { version, isLatest } = await fetchLatestBaileysVersion();
-        console.log(`Using Baileys version: ${version}`);
-        
-        // Setup Baileys with keep-alive
+        const { version } = await fetchLatestBaileysVersion();
         const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
         
-        sock = makeWASocket({
+        const sock = makeWASocket({
             version,
             auth: state,
             printQRInTerminal: false,
             browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
-            logger: pino({ level: 'error' }),
-            generateHighQualityLinkPreview: false,
-            syncFullHistory: false,
-            defaultQueryTimeoutMs: 60000, // Increase timeout
-            keepAliveIntervalMs: 30000 // Keep connection alive
+            logger: pino({ level: 'error' })
         });
         
-        // Store session info
-        activeSessions.set(sessionId, {
-            sock,
-            phone,
-            sessionDir,
-            paired: false,
-            res: res // Store response object to send later if needed
-        });
+        // Store session
+        activeSessions.set(sessionId, { sock, phone, sessionDir, paired: false });
         
-        // Listen for connection updates
+        // Handle connection
         sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection } = update;
             
             if (connection === 'open') {
-                console.log(`✅ User paired successfully: ${phone}`);
-                
                 const session = activeSessions.get(sessionId);
                 if (session && !session.paired) {
                     session.paired = true;
                     
                     try {
-                        // Send session ID to user's DM
                         await sock.sendMessage(phone + '@s.whatsapp.net', {
                             text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\n⚠️ Keep this secret!`
                         });
@@ -357,51 +550,21 @@ app.post('/pair', async (req, res) => {
                         console.error('Failed to send session ID:', err);
                     }
                     
-                    // Clean up after 10 seconds
                     setTimeout(() => {
                         sock?.ws?.close();
                         activeSessions.delete(sessionId);
-                    }, 10000);
-                }
-            }
-            
-            if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const isLoggedOut = statusCode === 401;
-                
-                if (isLoggedOut) {
-                    console.log(`Connection closed - logged out for ${phone}`);
-                } else {
-                    console.log(`Connection closed for ${phone} (reconnecting...)`);
-                    // Try to reconnect
-                    // activeSessions.delete(sessionId);
+                    }, 5000);
                 }
             }
         });
         
-        // Save credentials
         sock.ev.on('creds.update', saveCreds);
         
-        // Wait for socket to be ready
         await new Promise(resolve => setTimeout(resolve, 2000));
         
-        // Set a timeout for the pairing request
-        const pairingPromise = sock.requestPairingCode(phone);
-        
-        // Race between pairing and timeout
-        const code = await Promise.race([
-            pairingPromise,
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('TIMEOUT')), 30000)
-            )
-        ]);
-        
-        console.log(`✅ Pairing code for ${phone}: ${code}`);
-        
-        // Format code with dash
+        const code = await sock.requestPairingCode(phone);
         const formattedCode = code.match(/.{1,4}/g)?.join('-') || code;
         
-        // Send code back to webpage immediately
         return res.json({
             success: true,
             code: formattedCode,
@@ -410,42 +573,99 @@ app.post('/pair', async (req, res) => {
         
     } catch (error) {
         console.error('❌ Pairing error:', error);
-        
-        // Clean up
-        if (sock) {
-            sock.ws?.close();
-        }
-        if (sessionId) {
-            activeSessions.delete(sessionId);
-        }
-        
-        let errorMessage = 'Failed to generate code. ';
-        let errorType = 'error';
-        
-        if (error.message === 'TIMEOUT') {
-            errorMessage = 'Connection timeout. WhatsApp might be blocking this request. Try again in 10-15 minutes.';
-            errorType = 'timeout';
-        } else if (error.message?.includes('rate')) {
-            errorMessage = 'Too many requests. Please wait 15 minutes and try again.';
-            errorType = 'timeout';
-        } else if (error.message?.includes('invalid')) {
-            errorMessage = 'Invalid phone number format. Use country code without + or spaces.';
-        } else if (error.message?.includes('block')) {
-            errorMessage = 'WhatsApp has temporarily blocked pairing from this server. Try again in 30 minutes.';
-            errorType = 'timeout';
-        } else {
-            errorMessage = 'Service temporarily unavailable. Try again in a few minutes.';
-        }
-        
         return res.json({
             success: false,
-            type: errorType,
-            message: errorMessage
+            message: 'Failed to generate code. Try again in a few minutes.'
+        });
+    }
+});
+
+// QR Code Endpoint
+app.post('/qr', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        
+        if (!phone) {
+            return res.json({ success: false, message: 'Phone number required' });
+        }
+        
+        console.log(`📱 Generating QR code for: ${phone}`);
+        
+        const sessionId = 'LunaBot_QR_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+        const sessionDir = path.join(__dirname, 'sessions', sessionId);
+        
+        if (!fs.existsSync(sessionDir)) {
+            fs.mkdirSync(sessionDir, { recursive: true });
+        }
+        
+        const { version } = await fetchLatestBaileysVersion();
+        const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+        
+        const sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: false,
+            browser: ['LunaBot Mini', 'Chrome', '1.0.0'],
+            logger: pino({ level: 'error' })
+        });
+        
+        let qrCodeData = null;
+        
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, qr } = update;
+            
+            if (qr) {
+                qrCodeData = qr;
+                const qrImage = await QRCode.toDataURL(qr);
+                
+                // Send QR to client if not already sent
+                if (!res.headersSent) {
+                    return res.json({
+                        success: true,
+                        qr: qrImage,
+                        message: 'Scan this QR code'
+                    });
+                }
+            }
+            
+            if (connection === 'open') {
+                console.log(`✅ QR user paired: ${phone}`);
+                
+                try {
+                    await sock.sendMessage(phone + '@s.whatsapp.net', {
+                        text: `🔐 *LunaBot Mini - Session Generated*\n\nYour Session ID: \`${sessionId}\`\n\nSave this ID for deployment.\n\n⚠️ Keep this secret!`
+                    });
+                    console.log(`✅ Session ID sent to ${phone}`);
+                } catch (err) {
+                    console.error('Failed to send session ID:', err);
+                }
+                
+                setTimeout(() => sock?.ws?.close(), 5000);
+            }
+        });
+        
+        sock.ev.on('creds.update', saveCreds);
+        
+        // Wait for QR or timeout
+        setTimeout(() => {
+            if (!res.headersSent) {
+                return res.json({
+                    success: false,
+                    message: 'QR generation timeout. Try again.'
+                });
+            }
+        }, 30000);
+        
+    } catch (error) {
+        console.error('❌ QR error:', error);
+        return res.json({
+            success: false,
+            message: 'Failed to generate QR code.'
         });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ LunaBot Pairing Server running on port ${PORT}`);
-    console.log(`🌐 Open https://lunabot-mini.onrender.com in browser`);
+    console.log(`✅ LunaBot Server running on port ${PORT}`);
+    console.log(`🌐 Open https://lunabot-mini.onrender.com`);
 });
